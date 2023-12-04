@@ -390,6 +390,7 @@ public:
     static std::pair<TopAbs_ShapeEnum,int> shapeTypeAndIndex(const char *name);
 private:
     TopoDS_Shape _Shape;
+    TopoDS_Shape _makeOffset2D(double offset, short joinType, bool fill, bool allowOpenResult, bool intersection, TopoDS_Shape shape) const;
 };
 
 } //namespace Part

@@ -2724,7 +2724,22 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
 {
     if (_Shape.IsNull())
         throw Base::ValueError("makeOffset2D: input shape is null!");
+    return _makeOffset2D(offset, joinType, fill, allowOpenResult, intersection, _Shape);
+}
 
+    // This exists, because we need to call it twice in order to handle negative offsets.  The first
+    // pass creates a larger ( positive offset shape ) that happens to have a reverse orientation.
+    // We can then call it again with twice the offset to pass by the original shape to the offset
+    // in the negative direction, but only calling OCCT with positive values.
+    //
+    // That's because of a long standing bug that exists in OCCT that has not been fixed.
+    // Discussion here: https://forum.freecad.org/viewtopic.php?p=577963#p577963
+    // Overall OCCT tracking here: https://forum.freecad.org/viewtopic.php?t=20264
+    // The bug report that spurred this patch: https://github.com/FreeCAD/FreeCAD/issues/6538
+
+TopoDS_Shape TopoShape::_makeOffset2D(double offset, short joinType, bool fill, bool allowOpenResult, bool intersection, TopoDS_Shape shape) const
+{
+    bool handleNegative = false;
     // OUTLINE OF MAKEOFFSET2D
     // * Prepare shapes to process
     // ** if _Shape is a compound, recursively call this routine for all subcompounds
@@ -2744,22 +2759,22 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
     std::vector<TopoDS_Shape> shapesToReturn;
     bool forceOutputCompound = false;
 
-    if (this->_Shape.ShapeType() == TopAbs_COMPOUND) {
+    if ( shape.ShapeType() == TopAbs_COMPOUND) {
         if (!intersection) {
             //simply recursively process the children, independently
-            TopoDS_Iterator it(_Shape);
+            TopoDS_Iterator it(shape);
             for( ; it.More() ; it.Next()) {
-                shapesToReturn.push_back( TopoShape(it.Value()).makeOffset2D(offset, joinType, fill, allowOpenResult, intersection) );
+                shapesToReturn.push_back( TopoShape(it.Value())._makeOffset2D(offset, joinType, fill, allowOpenResult, intersection, shape) );
                 forceOutputCompound = true;
             }
         }
         else {
             //collect non-compounds from this compound for collective offset. Process other shapes independently.
-            TopoDS_Iterator it(_Shape);
+            TopoDS_Iterator it(shape);
             for( ; it.More() ; it.Next()) {
                 if(it.Value().ShapeType() == TopAbs_COMPOUND) {
                     //recursively process subcompounds
-                    shapesToReturn.push_back( TopoShape(it.Value()).makeOffset2D(offset, joinType, fill, allowOpenResult, intersection) );
+                    shapesToReturn.push_back( TopoShape(it.Value())._makeOffset2D(offset, joinType, fill, allowOpenResult, intersection, shape) );
                     forceOutputCompound = true;
                 }
                 else {
@@ -2769,7 +2784,7 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
         }
     }
     else {
-        shapesToProcess.push_back(this->_Shape);
+        shapesToProcess.push_back(shape);
     }
 
     if(!shapesToProcess.empty()) {
@@ -2839,6 +2854,10 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
             mkOffset.AddWire(w);
         }
 
+        if ( offset < 0 ) {
+            handleNegative = true;
+            offset = fabs(offset);
+        }
         if (fabs(offset) > Precision::Confusion()) {
             try {
     #if defined(__GNUC__) && defined (FC_OS_LINUX)
@@ -3022,6 +3041,7 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
     //assemble output compound
     if (shapesToReturn.empty())
         return {}; //failure
+    TopoDS_Shape res;
     if (shapesToReturn.size() > 1 || forceOutputCompound){
         TopoDS_Compound result;
         BRep_Builder builder;
@@ -3031,11 +3051,14 @@ TopoDS_Shape TopoShape::makeOffset2D(double offset, short joinType, bool fill, b
                 builder.Add(result, sh);
             }
         }
-        return TopoDS_Shape(std::move(result));
+        res = TopoDS_Shape(std::move(result));
     }
     else {
-        return shapesToReturn[0];
+        res = shapesToReturn[0];
     }
+    if ( handleNegative )
+        return _makeOffset2D(offset * 2, joinType, fill, allowOpenResult, intersection, res);
+    return res;
 }
 
 TopoDS_Shape TopoShape::makeThickSolid(const TopTools_ListOfShape& remFace,
