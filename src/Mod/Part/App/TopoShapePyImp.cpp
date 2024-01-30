@@ -2283,6 +2283,30 @@ PyObject* TopoShapePy::getElement(PyObject *args)
     }
 }
 
+PyObject* TopoShapePy::getElementNameMap(PyObject* args)
+{
+    if (!PyArg_ParseTuple(args, "")) {
+        return nullptr;
+    }
+
+    try {
+        auto vector = getTopoShapePtr()->getElementMap();
+
+        Py::Dict dict;
+        for (const auto& element : vector) {
+            if (element.index and element.name) {
+                dict.setItem(element.index.toString().c_str(),
+                             Py::String(element.name.toString().c_str()));
+            }
+        }
+        return Py::new_reference_to(dict);
+    }
+    catch (Standard_Failure& e) {
+        PyErr_SetString(PartExceptionOCCError, e.GetMessageString());
+        return nullptr;
+    }
+}
+
 PyObject* TopoShapePy::countElement(PyObject *args)
 {
     char* input;

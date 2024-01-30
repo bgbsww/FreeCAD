@@ -813,6 +813,15 @@ getElement(elementName) -> Face | Edge | Vertex
         </UserDocu>
       </Documentation>
     </Methode>
+      <Methode Name="getElementNameMap" Const="true">
+          <Documentation>
+              <UserDocu>Returns a dictionary of all SubElement names and their internal mapped names.
+                        Used for testing of the TNP solution.  Do not use for purposes other
+                        than debugging, and do not rely on consistent results.
+                        getElementNameMap() -> Dict
+              </UserDocu>
+          </Documentation>
+      </Methode>
     <Methode Name="countElement" Const="true">
       <Documentation>
         <UserDocu>Returns the count of a type of element
