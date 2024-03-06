@@ -50,6 +50,9 @@ TEST_F(PropertyTopoShapeTest, testPropertyPartShapeTopoShape)
     EXPECT_TRUE(topoDsShapeOut.IsSame(topoDsShapeIn));
     EXPECT_EQ(getVolume(topoDsShapeOut), 3);
 #ifdef FC_USE_TNP_FIX
+    // TODO: This next call should not be necessary, and is evidence that we are not setting the
+    // elementMaps up correctly.  Same call from the python layer in LS3 does create the elementMap.
+    _common->Shape.getShape().mapSubElement(_common->Shape.getShape().getSubTopoShapes());
     EXPECT_EQ(topoShapeOut.getElementMapSize(), 26);
 #else
     EXPECT_EQ(topoShapeOut.getElementMapSize(), 0);

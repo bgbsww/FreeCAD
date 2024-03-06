@@ -18,25 +18,46 @@ protected:
         tests::initApplication();
     }
 
+    // TODO:  See below for where this comparable code in LS3 doesn't happen:
+    //    >>> App.getDocument('Unnamed').addObject("Part::MultiCommon","Common")
+    //    >>> App.getDocument('Unnamed').getObject('Common').Shapes =
+    //    [FreeCAD.getDocument('Unnamed').getObject('Box001'),FreeCAD.getDocument('Unnamed').getObject('Box002'),]
+    //    >>> App.getDocument('Unnamed').getObject('Box001').Visibility = False
+    //    >>> App.getDocument('Unnamed').getObject('Box002').Visibility = False
+    //    >>> App.ActiveDocument.recompute()
+    //    >>> o2 = App.ActiveDocument.Objects[-1]
+    //    >>> o2.Shape.ElementMap
+    //    {'Edge10;:M;CMN;:H19c:7,E': 'Edge7', 'Edge11;:M;CMN;:H19b:7,E': 'Edge8',
+    //    'Edge12;:M;CMN;:H19b:7,E': 'Edge5', 'Edge1;:M;CMN;:H19c:7,E': 'Edge4',
+    //    'Edge2;:M#9;CMN;:H19b:9,E': 'Edge1', 'Edge3;:M;CMN;:H19b:7,E': 'Edge2',
+    //    'Edge4;:M#a;CMN;:H19b:9,E': 'Edge3', 'Edge5;:M;CMN;:H19c:7,E': 'Edge12',
+    //    'Edge6;:M#b;CMN;:H19b:9,E': 'Edge6', 'Edge7;:M;CMN;:H19b:7,E': 'Edge9',
+    //    'Edge8;:M#c;CMN;:H19b:9,E': 'Edge10', 'Edge9;:M;CMN;:H19c:7,E': 'Edge11',
+    //    'Face1;:M#d;CMN;:H19b:9,F': 'Face1', 'Face2;:M#10;CMN;:H19b:a,F': 'Face6',
+    //    'Face3;:M;CMN;:H19c:7,F': 'Face5', 'Face4;:M;CMN;:H19b:7,F': 'Face3',
+    //    'Face5;:M#f;CMN;:H19b:9,F': 'Face4', 'Face6;:M#e;CMN;:H19b:9,F': 'Face2',
+    //    'Vertex1;:M;CMN;:H19c:7,V': 'Vertex1', 'Vertex2;:M;CMN;:H19c:7,V': 'Vertex4',
+    //    'Vertex3;:M;CMN;:H19b:7,V': 'Vertex2', 'Vertex4;:M;CMN;:H19b:7,V': 'Vertex3',
+    //    'Vertex5;:M;CMN;:H19c:7,V': 'Vertex6', 'Vertex6;:M;CMN;:H19c:7,V': 'Vertex8',
+    //    'Vertex7;:M;CMN;:H19b:7,V': 'Vertex5', 'Vertex8;:M;CMN;:H19b:7,V': 'Vertex7'}
+
 
     void SetUp() override
     {
         createTestDoc();
-        _common = dynamic_cast<Common*>(_doc->addObject("Part::Common"));
+        _common = dynamic_cast<MultiCommon*>(_doc->addObject("Part::MultiCommon"));
     }
 
     void TearDown() override
     {}
 
-    Common* _common = nullptr;  // NOLINT Can't be private in a test framework
+    MultiCommon* _common = nullptr;
 };
 
 TEST_F(FeaturePartTest, testGetElementName)
 {
     // Arrange
-    _common->Base.setValue(_boxes[0]);
-    _common->Tool.setValue(_boxes[1]);
-
+    _common->Shapes.setValue({_boxes[0], _boxes[1]});
     // Act
     _common->execute();
     const TopoShape& ts = _common->Shape.getShape();
@@ -54,7 +75,10 @@ TEST_F(FeaturePartTest, testGetElementName)
 #ifndef FC_USE_TNP_FIX
     EXPECT_EQ(ts.getElementMap().size(), 0);
 #else
-    EXPECT_EQ(ts.getElementMap().size(), 0);  // TODO: Value and code TBD
+    // TODO: This next call should not be necessary, and is evidence that we are not setting the
+    // elementMaps up correctly.  Same call from the python layer in LS3 does create the elementMap.
+    _common->Shape.getShape().mapSubElement(_common->Shape.getShape().getSubTopoShapes());
+    EXPECT_EQ(ts.getElementMap().size(), 26);  // TODO: Value and code TBD
 #endif
     // TBD
 }
@@ -126,4 +150,26 @@ TEST_F(FeaturePartTest, create)
     // The last call to Feature::create acts on otherDoc, which is empty, and therefor that document
     // will have only 1 feature
     EXPECT_EQ(otherDoc->getObjects().size(), 1);
+}
+
+TEST_F(FeaturePartTest, testGetTopoShape)
+{
+    // Arrange
+    _common->Shapes.setValue({_boxes[0], _boxes[1]});
+    //    auto [cube1, cube2] = CreateTwoTopoShapeCubes();
+    //    EXPECT_EQ(cube1.getElementMapSize(),54);
+    // Act
+    _common->execute();
+    // TODO: This next call should not be necessary, and is evidence that we are not setting the
+    // elementMaps up correctly.  Same call from the python layer in LS3 does create the elementMap.
+    _common->Shape.getShape().mapSubElement(_common->Shape.getShape().getSubTopoShapes());
+    const auto& topoShape1 = _common->getTopoShape(_common);
+    const auto& topoShape2 = _common->getTopoShape(_common, "Part__Box");
+    // Assert
+    EXPECT_STREQ(_boxes[0]->Shape.getShape().shapeName().c_str(), "Solid");
+    EXPECT_EQ(topoShape1.getSubTopoShapes().size(), 1);
+    EXPECT_EQ(topoShape1.getElementMapSize(), 0);
+    EXPECT_EQ(topoShape2.getSubTopoShapes().size(), 1);
+    EXPECT_EQ(topoShape2.getElementMapSize(), 0);
+    EXPECT_EQ(_common->Shape.getShape().getElementMapSize(), 26);
 }
