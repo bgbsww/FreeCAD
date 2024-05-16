@@ -842,6 +842,65 @@ void Feature::clearShapeCache() {
 //    _ShapeCache.cache.clear();
 }
 
+static inline bool checkLink(const App::DocumentObject *obj) {
+    return obj->getExtensionByType<App::LinkBaseExtension>(obj)
+        || obj->getExtensionByType<App::GeoFeatureGroupExtension>(obj);
+}
+
+using CharRange = boost::iterator_range<const char*>;
+
+static bool checkLinkVisibility(std::set<std::string> &hiddens,
+                                bool check, const App::DocumentObject *&lastLink,
+                                const App::DocumentObject *obj, const char *subname)
+{
+    if(!obj || !obj->getNameInDocument())
+        return false;
+
+    if(checkLink(obj)) {
+        lastLink = obj;
+        for(auto &s : App::LinkBaseExtension::getHiddenSubnames(obj))
+            hiddens.emplace(std::move(s));
+    }
+
+    if(!subname || !subname[0])
+        return true;
+
+    auto element = Data::findElementName(subname);
+    std::string sub(subname,element-subname);
+
+    for(auto pos=sub.find('.');pos!=std::string::npos;pos=sub.find('.',pos+1)) {
+        char c = sub[pos+1];
+        sub[pos+1] = 0;
+
+        for(auto it=hiddens.begin();it!=hiddens.end();) {
+            if(!boost::starts_with(*it,CharRange(sub.c_str(),sub.c_str()+pos+1)))
+                it = hiddens.erase(it);
+            else {
+                if(check && it->size()==pos+1)
+                    return false;
+                ++it;
+            }
+        }
+        auto sobj = obj->getSubObject(sub.c_str());
+        if(!sobj || !sobj->getNameInDocument())
+            return false;
+        if(checkLink(sobj)) {
+            for(auto &s : App::LinkBaseExtension::getHiddenSubnames(sobj))
+                hiddens.insert(std::string(sub)+s);
+            lastLink = sobj;
+        }
+        sub[pos+1] = c;
+    }
+
+    std::set<std::string> res;
+    for(auto &s : hiddens) {
+        if(s.size()>sub.size())
+            res.insert(s.c_str()+sub.size());
+    }
+    hiddens = std::move(res);
+    return true;
+}
+
 static TopoShape _getTopoShape(const App::DocumentObject* obj,
                                const char* subname,
                                bool needSubElement,
@@ -1106,12 +1165,10 @@ static TopoShape _getTopoShape(const App::DocumentObject* obj,
 
             std::set<std::string> nextHiddens = hiddens;
             const App::DocumentObject* nextLink = lastLink;
-            // Todo: This might belong.
-            // Toponaming project March 2024:  This appears to be a non toponaming feature:
-//            if (!checkLinkVisibility(nextHiddens, true, nextLink, owner, sub.c_str())) {
-//                cacheable = false;
-//                continue;
-//            }
+            if (!checkLinkVisibility(nextHiddens, true, nextLink, owner, sub.c_str())) {
+                cacheable = false;
+                continue;
+            }
 
             TopoShape shape;
 
@@ -1201,11 +1258,9 @@ TopoShape Feature::getTopoShape(const App::DocumentObject* obj,
 
     const App::DocumentObject* lastLink = 0;
     std::set<std::string> hiddens;
-    // Toponaming project March 2024:  This appears to be a non toponaming feature:
-    // Todo is this a cause behind #13886 ?
-//    if (!checkLinkVisibility(hiddens, false, lastLink, obj, subname)) {
-//        return TopoShape();
-//    }
+    if (!checkLinkVisibility(hiddens, false, lastLink, obj, subname)) {
+        return TopoShape();
+    }
 
     // NOTE! _getTopoShape() always return shape without top level
     // transformation for easy shape caching, i.e.  with `transform` set
