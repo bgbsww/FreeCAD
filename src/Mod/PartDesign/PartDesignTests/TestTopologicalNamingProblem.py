@@ -1474,33 +1474,6 @@ class TestTopologicalNamingProblem(unittest.TestCase):
         self.Doc.recompute()
         self.assertEqual(self.Doc.Sketch.Shape.ElementMapSize, 18)
 
-    def create_t_sketch(self):
-        self.Doc.getObject('Body').newObject('Sketcher::SketchObject', 'Sketch')
-        geo_list = [
-            Part.LineSegment(App.Vector(0, 0, 0), App.Vector(20, 0, 0)),
-            Part.LineSegment(App.Vector(20, 0, 0), App.Vector(20, 10, 0)),
-            Part.LineSegment(App.Vector(20, 10, 0), App.Vector(10, 10, 0)),
-            Part.LineSegment(App.Vector(10, 10, 0), App.Vector(10, 20, 0)),
-            Part.LineSegment(App.Vector(10, 20, 0), App.Vector(0, 20, 0)),
-            Part.LineSegment(App.Vector(0, 20, 0), App.Vector(0, 0, 0))]
-        self.Doc.getObject('Sketch').addGeometry(geo_list, False)
-        con_list = [
-            Sketcher.Constraint('Coincident', 0, 2, 1, 1),
-            Sketcher.Constraint('Coincident', 1, 2, 2, 1),
-            Sketcher.Constraint('Coincident', 2, 2, 3, 1),
-            Sketcher.Constraint('Coincident', 3, 2, 4, 1),
-            Sketcher.Constraint('Coincident', 4, 2, 5, 1),
-            Sketcher.Constraint('Coincident', 5, 2, 0, 1),
-            Sketcher.Constraint('Horizontal', 0),
-            Sketcher.Constraint('Horizontal', 2),
-            Sketcher.Constraint('Horizontal', 4),
-            Sketcher.Constraint('Vertical', 1),
-            Sketcher.Constraint('Vertical', 3),
-            Sketcher.Constraint('Vertical', 5)]
-        self.Doc.getObject('Sketch').addConstraint(con_list)
-        del geo_list, con_list
-        self.Doc.recompute()
-
     def testRectanglewithArcChangeinGlobalCenter(self):
         # Arrange
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
@@ -1927,6 +1900,279 @@ class TestTopologicalNamingProblem(unittest.TestCase):
         :H976:9,E;:L#8;PSM;:H976:9,F;:H-977,F.Face11 is only temporary and can be ignored."""
         self.assertTrue(self.Sketch002.AttachmentSupport[0][1][0] == "Face11")
         self.assertGreaterEqual(self.Body.Shape.Volume, 20126)
+
+    def testExternalGeometryAdd(self):
+        # Arrange
+        Width = 30
+        Depth = 20
+        Height = 10
+        CylDia = 10
+        self.Body = self.Doc.addObject('PartDesign::Body', 'Body')
+        self.Sketch = self.Doc.addObject('Sketcher::SketchObject', 'Sketch')
+        self.Body.addObject(self.Sketch)
+        TestSketcherApp.CreateRectangleSketch(self.Sketch, (0, 0), (Width, Depth))
+
+        self.Pad = self.Doc.addObject("PartDesign::Pad", "Pad")
+        self.Body.addObject(self.Pad)
+        self.Pad.Profile = self.Sketch
+        self.Pad.Length = Height
+        self.Doc.recompute()
+
+        self.Sketch001 = self.Body.newObject('Sketcher::SketchObject', 'Sketch001')
+        self.Sketch001.AttachmentSupport = (self.Doc.getObject('Pad'), ['Face6', ])
+        self.Sketch001.MapMode = 'FlatFace'
+
+        self.Sketch001.addExternal("Pad", "Edge12")  # This is geo -3
+        self.Sketch001.addExternal("Pad", "Edge7")  # This is geo -4
+
+        geoList = []
+        geoList.append(Part.Circle(App.Vector(Width / 2, Depth / 2, 0.000000),  # this is geo 0
+                                   App.Vector(0.000000, 0.000000, 1.000000), CylDia))
+        self.Sketch001.addGeometry(geoList, False)
+        del geoList
+        self.Sketch001.addConstraint(Sketcher.Constraint('Radius', 0, CylDia / 2))
+        # Place the 0,(3 = center) of the circle symmetric between the -3,(2 = end) of first external and
+        # the -4,(2 = end) of second external [essentially a diagonal non specified construction line]
+        self.Sketch001.addConstraint(Sketcher.Constraint('Symmetric', -3, 2, -4, 2, 0, 3))
+        self.Doc.recompute()
+
+        self.Pad001 = self.Body.newObject('PartDesign::Pad', 'Pad001')
+        self.Pad001.Profile = self.Doc.getObject('Sketch001')
+        self.Pad001.Length = Height
+        self.Pad001.ReferenceAxis = (self.Doc.getObject('Sketch001'), ['N_Axis'])
+        self.Sketch001.Visibility = False
+        self.Pad001.AlongSketchNormal = 1
+        self.Doc.recompute()
+        self.Doc.getObject('Pad').Visibility = False
+
+        self.Doc.getObject('Sketch001').Visibility = False
+
+        area1 = self.Pad.Shape.Area
+        # Act by adding a new line to the original sketch.
+        point = App.Vector(Width/2, Height *1.5, 0)
+        self.Sketch.addGeometry(Part.LineSegment(self.Sketch.Geometry[0].StartPoint,point))
+        self.Sketch.delConstraint(11)    # Length of top line
+        self.Sketch.delConstraint(3)    # Unlock top left
+        self.Sketch.delConstraint(3)    # Don't force top horizontal
+        self.Sketch.addConstraint(Sketcher.Constraint('Distance', 2, 1, 2, 2, Width))
+        self.Sketch.addConstraint(Sketcher.Constraint('Distance', 3, 1, 3, 2, Depth))
+        self.Sketch.addConstraint(Sketcher.Constraint('Distance', 4, 1, 4, 2, Width/math.sqrt(2)))
+        self.Sketch.addConstraint(Sketcher.Constraint('Distance', 0, 1, 0, 2, Width/math.sqrt(2)))
+        self.Sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 1, 4, 2))
+        self.Sketch.addConstraint(Sketcher.Constraint('Coincident', 3, 2, 4, 1))
+
+        self.Doc.recompute()
+        area2 = self.Pad.Shape.Area
+
+        # Assert
+        if self.Body.Shape.ElementMapVersion == "":  # Should be '4' as of Mar Depth23.
+            return
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMax, Width)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMax, Depth)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMax, Height + Height)  # Original box pad + second pad
+        self.assertNotEqual(area1, area2)   # The fillets happened, right?
+        # The center of the circle is just off the center of the external geo box, showing everything
+        # adjusted correctly.
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.x, Width / 2)
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.y, Depth / 2)  # Moved
+
+        self.Doc.recompute()
+
+    def testExternalGeometryChange(self):
+        # Arrange
+        Width = 30
+        Depth = 20
+        Height = 10
+        Fillets = 4
+        CylDia = 10
+        self.Body = self.Doc.addObject('PartDesign::Body', 'Body')
+        self.Sketch = self.Doc.addObject('Sketcher::SketchObject', 'Sketch')
+        self.Body.addObject(self.Sketch)
+        TestSketcherApp.CreateRectangleSketch(self.Sketch, (0, 0), (Width, Depth))
+
+        self.Pad = self.Doc.addObject("PartDesign::Pad", "Pad")
+        self.Body.addObject(self.Pad)
+        self.Pad.Profile = self.Sketch
+        self.Pad.Length = Height
+        self.Doc.recompute()
+
+        self.Sketch001 = self.Body.newObject('Sketcher::SketchObject', 'Sketch001')
+        self.Sketch001.AttachmentSupport = (self.Doc.getObject('Pad'), ['Face6', ])
+        self.Sketch001.MapMode = 'FlatFace'
+
+        self.Sketch001.addExternal("Pad", "Edge12")  # This is geo -3
+        self.Sketch001.addExternal("Pad", "Edge7")  # This is geo -4
+
+        geoList = []
+        geoList.append(Part.Circle(App.Vector(Width / 2, Depth / 2, 0.000000),  # this is geo 0
+                                   App.Vector(0.000000, 0.000000, 1.000000), CylDia))
+        self.Sketch001.addGeometry(geoList, False)
+        del geoList
+        self.Sketch001.addConstraint(Sketcher.Constraint('Radius', 0, CylDia / 2))
+        # Place the 0,(3 = center) of the circle symmetric between the -3,(2 = end) of first external and
+        # the -4,(2 = end) of second external [essentially a diagonal non specified construction line]
+        self.Sketch001.addConstraint(Sketcher.Constraint('Symmetric', -3, 2, -4, 2, 0, 3))
+        self.Doc.recompute()
+
+        self.Pad001 = self.Body.newObject('PartDesign::Pad', 'Pad001')
+        self.Pad001.Profile = self.Doc.getObject('Sketch001')
+        self.Pad001.Length = Height
+        self.Pad001.ReferenceAxis = (self.Doc.getObject('Sketch001'), ['N_Axis'])
+        self.Sketch001.Visibility = False
+        self.Pad001.AlongSketchNormal = 1
+        self.Doc.recompute()
+        self.Doc.getObject('Pad').Visibility = False
+
+        self.Doc.getObject('Sketch001').Visibility = False
+
+        area1 = self.Pad.Shape.Area
+        # Act by changing the original sketch.  The first two fillets are slightly small
+        #       to intentionally throw the cylinder off center proving the change was made.
+        self.Doc.getObject('Sketch').fillet(0, 1,
+                                            App.Vector(Width - 1, Depth, 0),
+                                            App.Vector(Width, Depth - 1, 0),
+                                            Fillets-1, True, True, False)
+        self.Doc.getObject('Sketch').fillet(1, 2,
+                                            App.Vector(Width, 0 + 1, 0),
+                                            App.Vector(Width - 1, 0, 0),
+                                            Fillets-1, True, True, False)
+        self.Doc.getObject('Sketch').fillet(2, 3,
+                                            App.Vector(0 + 1, 0, 0),
+                                            App.Vector(0.0, 0 + 1, 0),
+                                            Fillets, True, True, False)
+        self.Doc.getObject('Sketch').fillet(3, 0,
+                                            App.Vector(0, Depth - 1, 0),
+                                            App.Vector(0 + 1, Depth, 0),
+                                            Fillets, True, True, False)
+        self.Sketch.addConstraint(Sketcher.Constraint('Radius', 4, Fillets-1))
+        self.Sketch.addConstraint(Sketcher.Constraint('Radius', 6, Fillets-1))
+        self.Sketch.addConstraint(Sketcher.Constraint('Radius', 8, Fillets))
+        self.Sketch.addConstraint(Sketcher.Constraint('Radius', 10, Fillets))
+        self.Doc.recompute()
+        area2 = self.Pad.Shape.Area
+
+        # Assert
+        if self.Body.Shape.ElementMapVersion == "":  # Should be '4' as of Mar Depth23.
+            return
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMax, Width)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMax, Depth)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMax, Height + Height)  # Original box pad + second pad
+        self.assertNotEqual(area1, area2)   # The fillets happened, right?
+        # The center of the circle is just off the center of the external geo box, showing everything
+        # adjusted correctly.
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.x, Width / 2)
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.y, (Depth-1) / 2)  # Moved
+
+        self.Sketch.delGeometry(0)  # Top line
+        self.Sketch.delGeometry(3)  # Top right fillet center point
+        self.Sketch.delGeometry(3)  # Top right fillet
+        self.Sketch.addGeometry(Part.LineSegment(self.Sketch.Geometry[0].StartPoint,self.Sketch.Geometry[7].StartPoint))
+        self.Doc.recompute()
+
+    def testExternalGeometryDelete(self):
+        # Arrange
+        Width = 30
+        Depth = 20
+        Height = 10
+        CylDia = 10
+        self.Body = self.Doc.addObject('PartDesign::Body', 'Body')
+        self.Sketch = self.Doc.addObject('Sketcher::SketchObject', 'Sketch')
+        self.Body.addObject(self.Sketch)
+        TestSketcherApp.CreateRectangleSketch(self.Sketch, (0, 0), (Width, Depth))
+
+        self.Pad = self.Doc.addObject("PartDesign::Pad", "Pad")
+        self.Body.addObject(self.Pad)
+        self.Pad.Profile = self.Sketch
+        self.Pad.Length = Height
+        self.Doc.recompute()
+
+        self.Sketch001 = self.Body.newObject('Sketcher::SketchObject', 'Sketch001')
+        self.Sketch001.AttachmentSupport = (self.Doc.getObject('Pad'), ['Face6', ])
+        self.Sketch001.MapMode = 'FlatFace'
+
+        self.Sketch001.addExternal("Pad", "Edge12")  # This is geo -3
+        self.Sketch001.addExternal("Pad", "Edge7")  # This is geo -4
+
+        geoList = []
+        geoList.append(Part.Circle(App.Vector(Width / 2, Depth / 2, 0.000000),  # this is geo 0
+                                   App.Vector(0.000000, 0.000000, 1.000000), CylDia))
+        self.Sketch001.addGeometry(geoList, False)
+        del geoList
+        self.Sketch001.addConstraint(Sketcher.Constraint('Radius', 0, CylDia / 2))
+        # Place the 0,(3 = center) of the circle symmetric between the -3,(2 = end) of first external and
+        # the -4,(2 = end) of second external [essentially a diagonal non specified construction line]
+        self.Sketch001.addConstraint(Sketcher.Constraint('Symmetric', -3, 2, -4, 2, 0, 3))
+        self.Doc.recompute()
+
+        self.Pad001 = self.Body.newObject('PartDesign::Pad', 'Pad001')
+        self.Pad001.Profile = self.Doc.getObject('Sketch001')
+        self.Pad001.Length = Height
+        self.Pad001.ReferenceAxis = (self.Doc.getObject('Sketch001'), ['N_Axis'])
+        self.Sketch001.Visibility = False
+        self.Pad001.AlongSketchNormal = 1
+        self.Doc.recompute()
+        self.Doc.getObject('Pad').Visibility = False
+
+        self.Doc.getObject('Sketch001').Visibility = False
+
+        area1 = self.Pad.Shape.Area
+        # Act by deleting from the original sketch
+        self.Sketch.delConstraint(7)
+        self.Sketch.delGeometry(0)  # Top line
+        self.Sketch.addConstraint(Sketcher.Constraint("Coincident",0,1,2,2))
+        self.Doc.recompute()
+        self.Doc.recompute()
+        area2 = self.Pad.Shape.Area
+
+        # Assert
+        if self.Body.Shape.ElementMapVersion == "":  # Should be '4' as of Mar Depth23.
+            return
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMin, 0)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.XMax, Width)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.YMax, Depth)
+        self.assertAlmostEqual(self.Body.Shape.BoundBox.ZMax, Height + Height)  # Original box pad + second pad
+        self.assertNotEqual(area1, area2)   # The fillets happened, right?
+        # The center of the circle is just off the center of the external geo box, showing everything
+        # adjusted correctly.
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.x, Width / 2)
+        self.assertAlmostEqual(self.Sketch001.Geometry[0].Center.y, (Depth-1) / 2)  # Moved
+
+    # End of tests
+    # Start of helpers
+    def create_t_sketch(self):
+        self.Doc.getObject('Body').newObject('Sketcher::SketchObject', 'Sketch')
+        geo_list = [
+            Part.LineSegment(App.Vector(0, 0, 0), App.Vector(20, 0, 0)),
+            Part.LineSegment(App.Vector(20, 0, 0), App.Vector(20, 10, 0)),
+            Part.LineSegment(App.Vector(20, 10, 0), App.Vector(10, 10, 0)),
+            Part.LineSegment(App.Vector(10, 10, 0), App.Vector(10, 20, 0)),
+            Part.LineSegment(App.Vector(10, 20, 0), App.Vector(0, 20, 0)),
+            Part.LineSegment(App.Vector(0, 20, 0), App.Vector(0, 0, 0))]
+        self.Doc.getObject('Sketch').addGeometry(geo_list, False)
+        con_list = [
+            Sketcher.Constraint('Coincident', 0, 2, 1, 1),
+            Sketcher.Constraint('Coincident', 1, 2, 2, 1),
+            Sketcher.Constraint('Coincident', 2, 2, 3, 1),
+            Sketcher.Constraint('Coincident', 3, 2, 4, 1),
+            Sketcher.Constraint('Coincident', 4, 2, 5, 1),
+            Sketcher.Constraint('Coincident', 5, 2, 0, 1),
+            Sketcher.Constraint('Horizontal', 0),
+            Sketcher.Constraint('Horizontal', 2),
+            Sketcher.Constraint('Horizontal', 4),
+            Sketcher.Constraint('Vertical', 1),
+            Sketcher.Constraint('Vertical', 3),
+            Sketcher.Constraint('Vertical', 5)]
+        self.Doc.getObject('Sketch').addConstraint(con_list)
+        del geo_list, con_list
+        self.Doc.recompute()
 
     def tearDown(self):
         """ Close our test document """
